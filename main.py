@@ -34,6 +34,9 @@ TARGET_CHANNEL_IDS = [
     1523638969970196582   # 3つ目のチャンネルID
 ]
 
+# 👑 テストコマンドの実行を許可するユーザーID
+ALLOWED_USER_ID = 1260279278998913181
+
 # タイムゾーンを日本時間に設定
 JST = pytz.timezone("Asia/Tokyo")
 
@@ -68,10 +71,19 @@ async def on_ready():
     daily_joke_loop.start()
 
 # ==========================================
-# 2. 定期投稿タスク（毎日お昼の12:00に自動でつぶやく）
+# 2. 定期投稿タスク（【テスト用】毎日AM 3:30に自動でつぶやく）
 # ==========================================
-# 日本時間の昼12時を指定
-JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
+# 日本時間の朝3時30分を指定
+TEST_TIME = time(hour=3, minute=30, second=0, tzinfo=JST)
+
+@tasks.loop(time=TEST_TIME)
+async def daily_joke_loop():
+    joke = get_random_joke()
+    await send_to_all_channels(f"ーー 今日のおもしろ話 ーー\n{joke}")
+
+@daily_joke_loop.before_loop
+async def before_daily_joke_loop():
+    await bot.wait_until_ready()
 
 # 共通の送信処理を関数化
 async def send_to_all_channels(content):
@@ -82,15 +94,6 @@ async def send_to_all_channels(content):
                 await channel.send(content)
             except Exception as e:
                 print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
-
-@tasks.loop(time=JST_12PM)
-async def daily_joke_loop():
-    joke = get_random_joke()
-    await send_to_all_channels(f"ーー 今日のおもしろ話 ーー\n{joke}")
-
-@daily_joke_loop.before_loop
-async def before_daily_joke_loop():
-    await bot.wait_until_ready()
 
 # ==========================================
 # 3. コマンド（通常機能 ＆ 追加機能）
@@ -108,9 +111,14 @@ async def send_lol_joke(ctx):
     joke = get_random_joke()
     await ctx.send(joke)
 
-# 🔥 新機能①：「!lolbottest」で指定した3つのチャンネルに即時テスト送信
+# 🔒 新機能①：「!lolbottest」（指定ユーザー以外は反応しない）
 @bot.command(name="lolbottest")
 async def test_lol_bot(ctx):
+    # コマンドを打った人のIDが許可されたIDと一致するか確認
+    if ctx.author.id != ALLOWED_USER_ID:
+        # 一致しない場合は何もせずに処理を終了（スルー）
+        return
+
     await ctx.send("📢 指定された3つのチャンネルへテスト送信を実行します...")
     joke = get_random_joke()
     await send_to_all_channels(f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
@@ -118,14 +126,12 @@ async def test_lol_bot(ctx):
 # 🕶️ 新機能②：「!組長からの挑戦」で隠しメッセージを送信
 @bot.command(name="組長からの挑戦")
 async def boss_challenge(ctx):
-    # 隠しセリフのリスト（好きなだけ増やせます）
     boss_quotes = [
         "組長「2度とオールしないと言って1日後にオールする今日この頃byおぼろん」",
         "組長「フッ…いい度胸だ。この俺にコマンドを打つとはな。…とりあえずお茶淹れてくれ。」",
         "組長「挑戦だと？ ならば次の動画のカット数を2倍にしてやろうかァ！？」",
         "組長「よくここまで辿り着いた。褒美として、ワイの厳選おもしろ話を授けよう。\n【悲報】ワイ、コンビニでドヤ顔でポイントカード出したらドラッグストアのやつだった。」"
     ]
-    # ランダムで1つ選んで送信
     await ctx.send(random.choice(boss_quotes))
 
 # ==========================================
