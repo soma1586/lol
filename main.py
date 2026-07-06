@@ -73,38 +73,60 @@ async def on_ready():
 # 日本時間の昼12時を指定
 JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
 
-@tasks.loop(time=JST_12PM)
-async def daily_joke_loop():
-    joke = get_random_joke()
-    
-    # 登録されたすべてのチャンネルIDに対してループ処理で送信
+# 共通の送信処理を関数化
+async def send_to_all_channels(content):
     for channel_id in TARGET_CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
         if channel:
             try:
-                await channel.send(f"ーー 今日のおもしろ話 ーー\n{joke}")
+                await channel.send(content)
             except Exception as e:
                 print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
+
+@tasks.loop(time=JST_12PM)
+async def daily_joke_loop():
+    joke = get_random_joke()
+    await send_to_all_channels(f"ーー 今日のおもしろ話 ーー\n{joke}")
 
 @daily_joke_loop.before_loop
 async def before_daily_joke_loop():
     await bot.wait_until_ready()
 
 # ==========================================
-# 3. コマンド（チャットで打つといつでも文章を返す）
+# 3. コマンド（通常機能 ＆ 追加機能）
 # ==========================================
 
-# 「!joke」で呼び出す場合
+# 「!joke」
 @bot.command(name="joke")
 async def send_joke(ctx):
     joke = get_random_joke()
     await ctx.send(joke)
 
-# 「!lolbot」で自由にいつでも呼び出す場合！
+# 「!lolbot」
 @bot.command(name="lolbot")
 async def send_lol_joke(ctx):
     joke = get_random_joke()
     await ctx.send(joke)
+
+# 🔥 新機能①：「!lolbottest」で指定した3つのチャンネルに即時テスト送信
+@bot.command(name="lolbottest")
+async def test_lol_bot(ctx):
+    await ctx.send("📢 指定された3つのチャンネルへテスト送信を実行します...")
+    joke = get_random_joke()
+    await send_to_all_channels(f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
+
+# 🕶️ 新機能②：「!組長からの挑戦」で隠しメッセージを送信
+@bot.command(name="組長からの挑戦")
+async def boss_challenge(ctx):
+    # 隠しセリフのリスト（好きなだけ増やせます）
+    boss_quotes = [
+        "組長「おいお前、動画編集の手は止まってねぇだろうな…？ 終わるまで寝るんじゃねぇぞ。」",
+        "組長「フッ…いい度胸だ。この俺にコマンドを打つとはな。…とりあえずお茶淹れてくれ。」",
+        "組長「挑戦だと？ ならば次の動画のカット数を2倍にしてやろうかァ！？」",
+        "組長「よくここまで辿り着いた。褒美として、ワイの厳選おもしろ話を授けよう。\n【悲報】ワイ、コンビニでドヤ顔でポイントカード出したらドラッグストアのやつだった。」"
+    ]
+    # ランダムで1つ選んで送信
+    await ctx.send(random.choice(boss_quotes))
 
 # ==========================================
 # 4. Render用（Flask Webサーバー）
