@@ -67,14 +67,14 @@ def get_random_joke():
 @bot.event
 async def on_ready():
     print(f"🎉 お笑いBotが起動しました: {bot.user.name}")
-    # 毎日自動投稿するタイマーをスタート
-    daily_joke_loop.start()
+    if not daily_joke_loop.is_running():
+        daily_joke_loop.start()
 
 # ==========================================
-# 2. 定期投稿タスク（【テスト用】毎日AM 3:30に自動でつぶやく）
+# 2. 定期投稿タスク（【テスト用】毎日AM 4:00に自動でつぶやく）
 # ==========================================
-# 日本時間の朝3時30分を指定
-TEST_TIME = time(hour=3, minute=30, second=0, tzinfo=JST)
+# 日本時間の朝4時00分を指定
+TEST_TIME = time(hour=4, minute=0, second=0, tzinfo=JST)
 
 @tasks.loop(time=TEST_TIME)
 async def daily_joke_loop():
@@ -114,9 +114,7 @@ async def send_lol_joke(ctx):
 # 🔒 新機能①：「!lolbottest」（指定ユーザー以外は反応しない）
 @bot.command(name="lolbottest")
 async def test_lol_bot(ctx):
-    # コマンドを打った人のIDが許可されたIDと一致するか確認
     if ctx.author.id != ALLOWED_USER_ID:
-        # 一致しない場合は何もせずに処理を終了（スルー）
         return
 
     await ctx.send("📢 指定された3つのチャンネルへテスト送信を実行します...")
@@ -143,15 +141,16 @@ app = Flask("")
 def home():
     return "Joke Bot is running!"
 
-def run():
-    app.run(host="0.0.0.0", port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 # ==========================================
 # 5. 起動
 # ==========================================
-keep_alive()
-bot.run(os.getenv("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    bot.run(os.getenv("DISCORD_TOKEN"))
