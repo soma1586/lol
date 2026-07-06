@@ -67,34 +67,31 @@ def get_random_joke():
 @bot.event
 async def on_ready():
     print(f"🎉 お笑いBotが起動しました: {bot.user.name}")
-    if not daily_joke_loop.is_running():
-        daily_joke_loop.start()
+    # 毎日自動投稿するタイマーをスタート
+    daily_joke_loop.start()
 
 # ==========================================
-# 2. 定期投稿タスク（【テスト用】毎日AM 4:00に自動でつぶやく）
+# 2. 定期投稿タスク（毎日お昼の12:00に自動でつぶやく）
 # ==========================================
-# 日本時間の朝4時00分を、時差のバグが起きない正確な方法で指定
-TEST_TIME = time(hour=4, minute=0, second=0)
+# 日本時間の昼12時を指定
+JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
 
-# 日本時間のタイムゾーンをループ自体に直接適応させる
-@tasks.loop(time=TEST_TIME, tz=JST)
+@tasks.loop(time=JST_12PM)
 async def daily_joke_loop():
     joke = get_random_joke()
-    await send_to_all_channels(f"ーー 今日のおもしろ話 ーー\n{joke}")
-
-@daily_joke_loop.before_loop
-async def before_daily_joke_loop():
-    await bot.wait_until_ready()
-
-# 共通の送信処理を関数化
-async def send_to_all_channels(content):
+    
+    # 登録されたすべてのチャンネルIDに対してループ処理で送信
     for channel_id in TARGET_CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
         if channel:
             try:
-                await channel.send(content)
+                await channel.send(f"ーー 今日のおもしろ話 ーー\n{joke}")
             except Exception as e:
                 print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
+
+@daily_joke_loop.before_loop
+async def before_daily_joke_loop():
+    await bot.wait_until_ready()
 
 # ==========================================
 # 3. コマンド（通常機能 ＆ 追加機能）
@@ -119,8 +116,16 @@ async def test_lol_bot(ctx):
         return
 
     await ctx.send("📢 指定された3つのチャンネルへテスト送信を実行します...")
-    joke = get_random_joke()
-    await send_to_all_channels(f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
+    
+    # 全チャンネルに送信
+    for channel_id in TARGET_CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                joke = get_random_joke()
+                await channel.send(f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
+            except Exception as e:
+                print(f"テスト送信失敗 {channel_id}: {e}")
 
 # 🕶️ 新機能②：「!組長からの挑戦」で隠しメッセージを送信
 @bot.command(name="組長からの挑戦")
@@ -142,16 +147,15 @@ app = Flask("")
 def home():
     return "Joke Bot is running!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # ==========================================
 # 5. 起動
 # ==========================================
-if __name__ == "__main__":
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-    
-    bot.run(os.getenv("DISCORD_TOKEN"))
+keep_alive()
+bot.run(os.getenv("DISCORD_TOKEN"))
