@@ -27,14 +27,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 📢 おもしろ話を同時に投稿したい「3つのチャンネルID」をここに設定してください
+# 📢 通知を飛ばしたい「3つのチャンネルID」
 TARGET_CHANNEL_IDS = [
     1523741885750050847,  # 1つ目のチャンネルID
     1523748305190912000,  # 2つ目のチャンネルID
     1523638969970196582   # 3つ目のチャンネルID
 ]
 
-# 👑 テストコマンドの実行を許可するユーザーID
+# 👑 権限を持つユーザーID（soma1586さん）
 ALLOWED_USER_ID = 1260279278998913181
 
 # タイムゾーンを日本時間に設定
@@ -43,7 +43,6 @@ JST = pytz.timezone("Asia/Tokyo")
 # 直前に使ったネタを記憶する変数
 last_joke = None
 
-# ネタ帳ファイルから「前回と違うネタ」をランダムに1つ読み込む関数
 def get_random_joke():
     global last_joke
     try:
@@ -53,48 +52,45 @@ def get_random_joke():
         if not jokes:
             return "ネタ帳（jokes.txt）が空っぽだよ！ネタを追加してね。"
         
-        # ネタが2つ以上ある場合は、前回と同じネタを候補から外す
         if len(jokes) > 1 and last_joke in jokes:
             jokes.remove(last_joke)
             
         chosen_joke = random.choice(jokes)
-        last_joke = chosen_joke  # 今回選んだネタを記憶
+        last_joke = chosen_joke
         return chosen_joke
-
     except FileNotFoundError:
         return "エラー：jokes.txt が見つかりません。GitHubにファイルを作ってね！"
 
 @bot.event
 async def on_ready():
     print(f"🎉 お笑いBotが起動しました: {bot.user.name}")
-    # 毎日自動投稿するタイマーをスタート
     daily_joke_loop.start()
 
 # ==========================================
-# 2. 定期投稿タスク（毎日お昼の12:00に自動でつぶやく）
+# 2. 定期投稿タスク（毎日お昼の12:00）
 # ==========================================
-# 日本時間の昼12時を指定
 JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
 
-@tasks.loop(time=JST_12PM)
-async def daily_joke_loop():
-    joke = get_random_joke()
-    
-    # 登録されたすべてのチャンネルIDに対してループ処理で送信
+async def send_to_all_channels(content=None, embed=None):
     for channel_id in TARGET_CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
         if channel:
             try:
-                await channel.send(f"ーー 今日のおもしろ話 ーー\n{joke}")
+                await channel.send(content=content, embed=embed)
             except Exception as e:
                 print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
+
+@tasks.loop(time=JST_12PM)
+async def daily_joke_loop():
+    joke = get_random_joke()
+    await send_to_all_channels(content=f"ーー 今日のおもしろ話 ーー\n{joke}")
 
 @daily_joke_loop.before_loop
 async def before_daily_joke_loop():
     await bot.wait_until_ready()
 
 # ==========================================
-# 3. コマンド（通常機能 ＆ 追加機能）
+# 3. コマンド機能
 # ==========================================
 
 # 「!joke」
@@ -109,25 +105,16 @@ async def send_lol_joke(ctx):
     joke = get_random_joke()
     await ctx.send(joke)
 
-# 🔒 新機能①：「!lolbottest」（指定ユーザー以外は反応しない）
+# 🔒 「!lolbottest」
 @bot.command(name="lolbottest")
 async def test_lol_bot(ctx):
     if ctx.author.id != ALLOWED_USER_ID:
         return
-
     await ctx.send("📢 指定された3つのチャンネルへテスト送信を実行します...")
-    
-    # 全チャンネルに送信
-    for channel_id in TARGET_CHANNEL_IDS:
-        channel = bot.get_channel(channel_id)
-        if channel:
-            try:
-                joke = get_random_joke()
-                await channel.send(f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
-            except Exception as e:
-                print(f"テスト送信失敗 {channel_id}: {e}")
+    joke = get_random_joke()
+    await send_to_all_channels(content=f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
 
-# 🕶️ 新機能②：「!組長からの挑戦」で隠しメッセージを送信
+# 🕶️ 「!組長からの挑戦」
 @bot.command(name="組長からの挑戦")
 async def boss_challenge(ctx):
     boss_quotes = [
@@ -137,6 +124,46 @@ async def boss_challenge(ctx):
         "組長「よくここまで辿り着いた。褒美として、ワイの厳選おもしろ話を授けよう。\n【悲報】ワイ、コンビニでドヤ顔でポイントカード出したらドラッグストアのやつだった。」"
     ]
     await ctx.send(random.choice(boss_quotes))
+
+# 🚀 新機能：アップデート通知コマンド「!up」
+@bot.command(name="up")
+async def update_patch(ctx):
+    # soma1586さん以外は実行できないようにロック
+    if ctx.author.id != ALLOWED_USER_ID:
+        return
+
+    # ユーザーに変更内容を入力してもらう案内
+    await ctx.send("📝 **アップデートパッチの内容を入力してください。**\n（例：自動送信の不具合修正、新コマンドの追加 など）")
+
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    try:
+        # ユーザーからのメッセージを待つ（制限時間2分）
+        msg = await bot.wait_for("message", check=check, timeout=120.0)
+        update_content = msg.content
+
+        # 現在の年月を取得 (例: v2026-7)
+        now = datetime.now(JST)
+        version_str = f"v{now.year}-{now.month}"
+
+        # 綺麗なリリースノート（Embed）を作成
+        embed = discord.Embed(
+            title="📢 lolbot リリースノート！",
+            description=f"**バージョン:** `{version_str}`",
+            color=discord.Color.green(),
+            timestamp=now
+        )
+        embed.add_field(name="🛠️ アップデート内容", value=update_content, inline=False)
+        embed.add_field(name="👤 変更者", value="soma1586", inline=False)
+        embed.set_footer(text="lolbotは日々進化しています✊")
+
+        # 3つのチャンネルに送信
+        await send_to_all_channels(embed=embed)
+        await ctx.send("✅ アップデートパッチをすべてのチャンネルに送信しました！")
+
+    except TimeoutError:
+        await ctx.send("❌ 時間切れです。もう一度 `!up` をやり直してください。")
 
 # ==========================================
 # 4. Render用（Flask Webサーバー）
