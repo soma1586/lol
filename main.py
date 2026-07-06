@@ -73,10 +73,11 @@ async def on_ready():
 # ==========================================
 # 2. 定期投稿タスク（【テスト用】毎日AM 4:00に自動でつぶやく）
 # ==========================================
-# 日本時間の朝4時00分を指定
-TEST_TIME = time(hour=4, minute=0, second=0, tzinfo=JST)
+# 日本時間の朝4時00分を、時差のバグが起きない正確な方法で指定
+TEST_TIME = time(hour=4, minute=0, second=0)
 
-@tasks.loop(time=TEST_TIME)
+# 日本時間のタイムゾーンをループ自体に直接適応させる
+@tasks.loop(time=TEST_TIME, tz=JST)
 async def daily_joke_loop():
     joke = get_random_joke()
     await send_to_all_channels(f"ーー 今日のおもしろ話 ーー\n{joke}")
