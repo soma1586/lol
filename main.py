@@ -2,6 +2,7 @@ import os
 import random
 import subprocess
 import sys
+from datetime import datetime, time, timedelta
 from threading import Thread
 
 # ==========================================
@@ -11,11 +12,13 @@ try:
     import discord
     from discord.ext import commands, tasks
     from flask import Flask
+    import pytz
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "Flask"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "Flask", "pytz"])
     import discord
     from discord.ext import commands, tasks
     from flask import Flask
+    import pytz
 
 # ==========================================
 # 1. Discord Botの設定
@@ -24,17 +27,37 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 📢 おもしろ話を投稿したいチャンネルのIDを設定してください
-TARGET_CHANNEL_ID = 1523638969970196580
+# 📢 おもしろ話を同時に投稿したい「3つのチャンネルID」をここに設定してください
+TARGET_CHANNEL_IDS = [
+    1523638969970196580,  # 1つ目のチャンネルID
+    1523638969970196581,  # 2つ目のチャンネルID
+    1523638969970196582   # 3つ目のチャンネルID
+]
 
-# ネタ帳ファイルからランダムに1つおもしろ話を読み込む関数
+# タイムゾーンを日本時間に設定
+JST = pytz.timezone("Asia/Tokyo")
+
+# 直前に使ったネタを記憶する変数
+last_joke = None
+
+# ネタ帳ファイルから「前回と違うネタ」をランダムに1つ読み込む関数
 def get_random_joke():
+    global last_joke
     try:
         with open("jokes.txt", "r", encoding="utf-8") as f:
             jokes = [line.strip() for line in f.readlines() if line.strip()]
-        if jokes:
-            return random.choice(jokes)
-        return "ネタ帳（jokes.txt）が空っぽだよ！ネタを追加してね。"
+        
+        if not jokes:
+            return "ネタ帳（jokes.txt）が空っぽだよ！ネタを追加してね。"
+        
+        # ネタが2つ以上ある場合は、前回と同じネタを候補から外す
+        if len(jokes) > 1 and last_joke in jokes:
+            jokes.remove(last_joke)
+            
+        chosen_joke = random.choice(jokes)
+        last_joke = chosen_joke  # 今回選んだネタを記憶
+        return chosen_joke
+
     except FileNotFoundError:
         return "エラー：jokes.txt が見つかりません。GitHubにファイルを作ってね！"
 
@@ -45,14 +68,23 @@ async def on_ready():
     daily_joke_loop.start()
 
 # ==========================================
-# 2. 定期投稿タスク（1日に1回自動でつぶやく）
+# 2. 定期投稿タスク（毎日お昼の12:00に自動でつぶやく）
 # ==========================================
-@tasks.loop(hours=24)
+# 日本時間の昼12時を指定
+JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
+
+@tasks.loop(time=JST_12PM)
 async def daily_joke_loop():
-    channel = bot.get_channel(TARGET_CHANNEL_ID)
-    if channel:
-        joke = get_random_joke()
-        await channel.send(f"ーー 今日のおもしろ話 ーー\n{joke}")
+    joke = get_random_joke()
+    
+    # 登録されたすべてのチャンネルIDに対してループ処理で送信
+    for channel_id in TARGET_CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                await channel.send(f"ーー 今日のおもしろ話 ーー\n{joke}")
+            except Exception as e:
+                print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
 
 @daily_joke_loop.before_loop
 async def before_daily_joke_loop():
