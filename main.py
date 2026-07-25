@@ -42,7 +42,7 @@ JST = pytz.timezone("Asia/Tokyo")
 
 # 状態保持用変数
 last_joke = None
-today_joke_cache = {"date": None, "joke": None}  # /today 用のキャッシュ
+today_joke_cache = {"date": None, "joke": None}
 
 def get_random_joke():
     """jokes.txt からランダムに1個取得"""
@@ -84,10 +84,10 @@ def do_coin_flip():
     else:
         return "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
 
-def create_today_embed():
+def create_today_embed(custom_event_msg=None):
     """/today および !today 用のエムベッド作成"""
     joke = get_or_create_today_joke()
-    event_msg = events.get_seasonal_event_message()
+    event_msg = custom_event_msg if custom_event_msg else events.get_seasonal_event_message()
     
     embed = discord.Embed(
         title="📅 本日のおもしろ話",
@@ -157,8 +157,91 @@ async def today_joke_slash(interaction: discord.Interaction):
     await interaction.response.send_message(embed=create_today_embed())
 
 # ==========================================
+# 🎪 季節イベントテスト機能 (!testevents) UI 部品
+# ==========================================
+
+class EventSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="1月1日 (元日)", value="1-1", description="あけましておめでとうメッセージ"),
+            discord.SelectOption(label="2月14日 (バレンタイン)", value="2-14", description="バレンタインメッセージ"),
+            discord.SelectOption(label="4月1日 (エイプリルフール)", value="4-1", description="エイプリルフールメッセージ"),
+            discord.SelectOption(label="10月31日 (ハロウィン)", value="10-31", description="ハロウィンメッセージ"),
+            discord.SelectOption(label="12月24~25日 (クリスマス)", value="12-25", description="クリスマスメッセージ"),
+        ]
+        super().__init__(placeholder="季節イベントを選択してください...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        m, d = map(int, self.values[0].split("-"))
+        self.view.selected_month = m
+        self.view.selected_day = d
+        self.view.selected_label = [opt.label for opt in self.options if opt.value == self.values[0]][0]
+        
+        # ボタンを有効化
+        for item in self.view.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = False
+                
+        await interaction.response.edit_original_response(
+            content=f"🎯 **選択中:** {self.view.selected_label}\n\n**現在いるチャンネル（この場所）で実行テストを行いますか？**",
+            view=self.view
+        )
+
+class TestEventsView(discord.ui.View):
+    def __init__(self, author_id):
+        super().__init__(timeout=60)
+        self.author_id = author_id
+        self.selected_month = None
+        self.selected_day = None
+        self.selected_label = None
+        
+        self.add_item(EventSelect())
+        
+        # ボタン作成（初期状態は無効）
+        self.yes_btn = discord.ui.Button(label="はい (このチャンネルでテスト)", style=discord.ButtonStyle.success, disabled=True)
+        self.yes_btn.callback = self.yes_callback
+        self.add_item(self.yes_btn)
+        
+        self.all_btn = discord.ui.Button(label="いいえ (3つの通知チャンネルへ送信)", style=discord.ButtonStyle.secondary, disabled=True)
+        self.all_btn.callback = self.all_callback
+        self.add_item(self.all_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ コマンド実行者のみ操作可能です。", ephemeral=True)
+            return False
+        return True
+
+    async def yes_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        event_msg = events.get_seasonal_event_message(self.selected_month, self.selected_day)
+        joke = get_or_create_today_joke()
+        
+        msg_content = f"ーー 【イベントテスト】今日のおもしろ話 ーー\n✨ **【{self.selected_label}】** ✨\n{event_msg}\n\n{joke}"
+        await interaction.channel.send(content=msg_content)
+        await interaction.edit_original_response(content=f"✅ {self.selected_label} のテスト送信をこのチャンネルに行いました！", view=None)
+
+    async def all_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        event_msg = events.get_seasonal_event_message(self.selected_month, self.selected_day)
+        joke = get_or_create_today_joke()
+        
+        msg_content = f"ーー 【イベント配信テスト】今日のおもしろ話 ーー\n✨ **【{self.selected_label}】** ✨\n{event_msg}\n\n{joke}"
+        await send_to_all_channels(content=msg_content)
+        await interaction.edit_original_response(content=f"✅ {self.selected_label} のテスト送信を全通知チャンネルに行いました！", view=None)
+
+
+# ==========================================
 # 🛠️ 通常のプレフィックスコマンド (`!`)
 # ==========================================
+
+# 🎪 季節用テストコマンド (!testevents)
+@bot.command(name="testevents")
+async def test_events_cmd(ctx):
+    if ctx.author.id != ALLOWED_USER_ID:
+        return
+    view = TestEventsView(ctx.author.id)
+    await ctx.send("📅 **テストしたい季節イベントを選択してください：**", view=view)
 
 # 🪙 コイン投げコマンド (!coin, !コイン)
 @bot.command(name="coin", aliases=["コイン"])
