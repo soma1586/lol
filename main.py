@@ -61,7 +61,7 @@ def get_random_joke():
         last_joke = chosen_joke
         return chosen_joke
     except FileNotFoundError:
-        return "エラー：jokes.txt が見 me つかりません。GitHubにファイルを作ってね！"
+        return "エラー：jokes.txt が見つかりません。GitHubにファイルを作ってね！"
 
 def get_or_create_today_joke():
     """今日の面白い話を保持・取得（日付が変わると自動で新しくなる）"""
@@ -73,6 +73,33 @@ def get_or_create_today_joke():
         today_joke_cache["joke"] = get_random_joke()
         
     return today_joke_cache["joke"]
+
+def do_coin_flip():
+    """コイン投げの判定処理"""
+    rand = random.random()
+    if rand < 0.01:
+        return "🤯 **奇跡！コインが横向きに立ちました！！ (レア演出: 1%)**"
+    elif rand < 0.505:
+        return "🪙 コインの結果は... **【 表 (Heads) 】** です！"
+    else:
+        return "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
+
+def create_today_embed():
+    """/today および !today 用のエムベッド作成"""
+    joke = get_or_create_today_joke()
+    event_msg = events.get_seasonal_event_message()
+    
+    embed = discord.Embed(
+        title="📅 本日のおもしろ話",
+        description=joke,
+        color=discord.Color.gold(),
+        timestamp=datetime.now(JST)
+    )
+    if event_msg:
+        embed.add_field(name="🎉 本日の特別イベント", value=event_msg, inline=False)
+        
+    embed.set_footer(text="日付が変わると新しく更新されます！")
+    return embed
 
 # 全チャンネル送信関数
 async def send_to_all_channels(content=None, embed=None):
@@ -119,39 +146,29 @@ async def before_daily_joke_loop():
 # 💬 スラッシュコマンド (`/`)
 # ==========================================
 
-# 🪙 コイン投げコマンド
+# 🪙 コイン投げコマンド (/coin)
 @bot.tree.command(name="coin", description="コインを投げて表か裏を判定します（超レア演出あり！？）")
-async def coin_flip(interaction: discord.Interaction):
-    rand = random.random()
-    if rand < 0.01:
-        result = "🤯 **奇跡！コインが横向きに立ちました！！ (レア演出: 1%)**"
-    elif rand < 0.505:
-        result = "🪙 コインの結果は... **【 表 (Heads) 】** です！"
-    else:
-        result = "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
-    await interaction.response.send_message(result)
+async def coin_flip_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(do_coin_flip())
 
-# 📜 今日の面白い話を再表示
+# 📜 今日の面白い話を再表示 (/today)
 @bot.tree.command(name="today", description="今日のおもしろ話をもう一度確認します")
-async def today_joke(interaction: discord.Interaction):
-    joke = get_or_create_today_joke()
-    event_msg = events.get_seasonal_event_message()
-    
-    embed = discord.Embed(
-        title="📅 本日のおもしろ話",
-        description=joke,
-        color=discord.Color.gold(),
-        timestamp=datetime.now(JST)
-    )
-    if event_msg:
-        embed.add_field(name="🎉 本日の特別イベント", value=event_msg, inline=False)
-        
-    embed.set_footer(text="日付が変わると新しく更新されます！")
-    await interaction.response.send_message(embed=embed)
+async def today_joke_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=create_today_embed())
 
 # ==========================================
 # 🛠️ 通常のプレフィックスコマンド (`!`)
 # ==========================================
+
+# 🪙 コイン投げコマンド (!coin, !コイン)
+@bot.command(name="coin", aliases=["コイン"])
+async def send_coin(ctx):
+    await ctx.send(do_coin_flip())
+
+# 📜 今日の面白い話を再表示 (!today)
+@bot.command(name="today")
+async def send_today(ctx):
+    await ctx.send(embed=create_today_embed())
 
 @bot.command(name="joke")
 async def send_joke(ctx):
