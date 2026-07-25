@@ -2,48 +2,50 @@ import os
 import random
 import subprocess
 import sys
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from threading import Thread
 
-# ==========================================
-# 0. 必要なライブラリの自動インストール
-# ==========================================
+# 📦 ライブラリ自動インストール
 try:
     import discord
+    from discord import app_commands
     from discord.ext import commands, tasks
     from flask import Flask
     import pytz
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "Flask", "pytz"])
     import discord
+    from discord import app_commands
     from discord.ext import commands, tasks
     from flask import Flask
     import pytz
 
+# 季節イベントモジュールの読み込み
+import events
+
 # ==========================================
-# 1. Discord Botの設定
+# ⚙️ Discord Bot & 設定
 # ==========================================
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 📢 通知を飛ばしたい「3つのチャンネルID」
+# 📢 通知チャンネルIDリスト
 TARGET_CHANNEL_IDS = [
-    1523741885750050847,  # 1つ目のチャンネルID
-    1523748305190912000,  # 2つ目のチャンネルID
-    1523638969970196582   # 3つ目のチャンネルID
+    1523741885750050847,
+    1523748305190912000,
+    1523638969970196582
 ]
 
-# 👑 権限を持つユーザーID（soma1586さん）
 ALLOWED_USER_ID = 1260279278998913181
-
-# タイムゾーンを日本時間に設定
 JST = pytz.timezone("Asia/Tokyo")
 
-# 直前に使ったネタを記憶する変数
+# 状態保持用変数
 last_joke = None
+today_joke_cache = {"date": None, "joke": None}  # /today 用のキャッシュ
 
 def get_random_joke():
+    """jokes.txt からランダムに1個取得"""
     global last_joke
     try:
         with open("jokes.txt", "r", encoding="utf-8") as f:
@@ -59,18 +61,20 @@ def get_random_joke():
         last_joke = chosen_joke
         return chosen_joke
     except FileNotFoundError:
-        return "エラー：jokes.txt が見つかりません。GitHubにファイルを作ってね！"
+        return "エラー：jokes.txt が見 me つかりません。GitHubにファイルを作ってね！"
 
-@bot.event
-async def on_ready():
-    print(f"🎉 お笑いBotが起動しました: {bot.user.name}")
-    daily_joke_loop.start()
+def get_or_create_today_joke():
+    """今日の面白い話を保持・取得（日付が変わると自動で新しくなる）"""
+    global today_joke_cache
+    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    
+    if today_joke_cache["date"] != today_str or today_joke_cache["joke"] is None:
+        today_joke_cache["date"] = today_str
+        today_joke_cache["joke"] = get_random_joke()
+        
+    return today_joke_cache["joke"]
 
-# ==========================================
-# 2. 定期投稿タスク（毎日お昼の12:00）
-# ==========================================
-JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
-
+# 全チャンネル送信関数
 async def send_to_all_channels(content=None, embed=None):
     for channel_id in TARGET_CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
@@ -78,34 +82,85 @@ async def send_to_all_channels(content=None, embed=None):
             try:
                 await channel.send(content=content, embed=embed)
             except Exception as e:
-                print(f"チャンネル {channel_id} への送信に失敗しました: {e}")
+                print(f"チャンネル {channel_id} への送信失敗: {e}")
+
+@bot.event
+async def on_ready():
+    print(f"🎉 lolbot が正常に起動しました: {bot.user.name}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"🔄 {len(synced)} 個のスラッシュコマンドを同期しました")
+    except Exception as e:
+        print(f"同期エラー: {e}")
+    daily_joke_loop.start()
+
+# ==========================================
+# ⏰ 定期投稿タスク（毎日12:00）
+# ==========================================
+JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
 
 @tasks.loop(time=JST_12PM)
 async def daily_joke_loop():
-    joke = get_random_joke()
-    await send_to_all_channels(content=f"ーー 今日のおもしろ話 ーー\n{joke}")
+    joke = get_or_create_today_joke()
+    event_msg = events.get_seasonal_event_message()
+    
+    msg_content = "ーー 今日のおもしろ話 ーー\n"
+    if event_msg:
+        msg_content = f"✨ **【イベントメッセージ】** ✨\n{event_msg}\n\n" + msg_content
+    msg_content += joke
+    
+    await send_to_all_channels(content=msg_content)
 
 @daily_joke_loop.before_loop
 async def before_daily_joke_loop():
     await bot.wait_until_ready()
 
 # ==========================================
-# 3. コマンド機能
+# 💬 スラッシュコマンド (`/`)
 # ==========================================
 
-# 「!joke」
+# 🪙 コイン投げコマンド
+@bot.tree.command(name="coin", description="コインを投げて表か裏を判定します（超レア演出あり！？）")
+async def coin_flip(interaction: discord.Interaction):
+    rand = random.random()
+    if rand < 0.01:
+        result = "🤯 **奇跡！コインが横向きに立ちました！！ (レア演出: 1%)**"
+    elif rand < 0.505:
+        result = "🪙 コインの結果は... **【 表 (Heads) 】** です！"
+    else:
+        result = "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
+    await interaction.response.send_message(result)
+
+# 📜 今日の面白い話を再表示
+@bot.tree.command(name="today", description="今日のおもしろ話をもう一度確認します")
+async def today_joke(interaction: discord.Interaction):
+    joke = get_or_create_today_joke()
+    event_msg = events.get_seasonal_event_message()
+    
+    embed = discord.Embed(
+        title="📅 本日のおもしろ話",
+        description=joke,
+        color=discord.Color.gold(),
+        timestamp=datetime.now(JST)
+    )
+    if event_msg:
+        embed.add_field(name="🎉 本日の特別イベント", value=event_msg, inline=False)
+        
+    embed.set_footer(text="日付が変わると新しく更新されます！")
+    await interaction.response.send_message(embed=embed)
+
+# ==========================================
+# 🛠️ 通常のプレフィックスコマンド (`!`)
+# ==========================================
+
 @bot.command(name="joke")
 async def send_joke(ctx):
-    joke = get_random_joke()
-    await ctx.send(joke)
+    await ctx.send(get_random_joke())
 
-# 「!lolbot」
 @bot.command(name="lolbot")
 async def send_lol_joke(ctx):
-    joke = get_random_joke()
-    await ctx.send(joke)
+    await ctx.send(get_random_joke())
 
-# 🔒 「!lolbottest」
 @bot.command(name="lolbottest")
 async def test_lol_bot(ctx):
     if ctx.author.id != ALLOWED_USER_ID:
@@ -114,7 +169,6 @@ async def test_lol_bot(ctx):
     joke = get_random_joke()
     await send_to_all_channels(content=f"ーー 【テスト配信】今日のおもしろ話 ーー\n{joke}")
 
-# 🕶️ 「!組長からの挑戦」
 @bot.command(name="組長からの挑戦")
 async def boss_challenge(ctx):
     boss_quotes = [
@@ -125,29 +179,23 @@ async def boss_challenge(ctx):
     ]
     await ctx.send(random.choice(boss_quotes))
 
-# 🚀 新機能：アップデート通知コマンド「!up」
 @bot.command(name="up")
 async def update_patch(ctx):
-    # soma1586さん以外は実行できないようにロック
     if ctx.author.id != ALLOWED_USER_ID:
         return
 
-    # ユーザーに変更内容を入力してもらう案内
     await ctx.send("📝 **アップデートパッチの内容を入力してください。**\n（例：自動送信の不具合修正、新コマンドの追加 など）")
 
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
     try:
-        # ユーザーからのメッセージを待つ（制限時間2分）
         msg = await bot.wait_for("message", check=check, timeout=120.0)
         update_content = msg.content
 
-        # 現在の年月を取得 (例: v2026-7)
         now = datetime.now(JST)
         version_str = f"v{now.year}-{now.month}"
 
-        # 綺麗なリリースノート（Embed）を作成
         embed = discord.Embed(
             title="📢 lolbot リリースノート！",
             description=f"**バージョン:** `{version_str}`",
@@ -158,7 +206,6 @@ async def update_patch(ctx):
         embed.add_field(name="👤 変更者", value="soma1586", inline=False)
         embed.set_footer(text="lolbotは日々進化しています✊")
 
-        # 3つのチャンネルに送信
         await send_to_all_channels(embed=embed)
         await ctx.send("✅ アップデートパッチをすべてのチャンネルに送信しました！")
 
@@ -166,7 +213,7 @@ async def update_patch(ctx):
         await ctx.send("❌ 時間切れです。もう一度 `!up` をやり直してください。")
 
 # ==========================================
-# 4. Render用（Flask Webサーバー）
+# 🌐 Render用（Flask Webサーバー）
 # ==========================================
 app = Flask("")
 
@@ -182,7 +229,7 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# 5. 起動
+# 🚀 起動処理
 # ==========================================
 keep_alive()
 bot.run(os.getenv("DISCORD_TOKEN"))
