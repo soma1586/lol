@@ -100,15 +100,21 @@ def get_or_create_today_joke():
         
     return today_joke_cache["joke"]
 
+# ------------------------------------------
+# 🪙 コイントス処理（確率カスタム版）
+# ------------------------------------------
 def do_coin_flip():
-    """コイン投げの判定処理"""
+    """コイン投げの判定処理（表25%、裏35%、レア0.1%、ハズレ39.9%）"""
     rand = random.random()
-    if rand < 0.01:
-        return "🤯 **奇跡！コインが横向きに立ちました！！ (レア演出: 1%)**"
-    elif rand < 0.505:
+    
+    if rand < 0.001:        # 0.1%
+        return "🤯 **奇跡！コインが横向きに立ちました！！ (超レア演出: 0.1%)**"
+    elif rand < 0.251:      # 25.0%
         return "🪙 コインの結果は... **【 表 (Heads) 】** です！"
-    else:
+    elif rand < 0.601:      # 35.0%
         return "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
+    else:                   # 39.9%
+        return "🌀 コインは転がってどこかへ消えてしまった... (ハズレ)"
 
 def create_today_embed(custom_event_msg=None):
     """/today および !today 用のエムベッド作成"""
