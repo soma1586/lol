@@ -42,8 +42,34 @@ JST = pytz.timezone("Asia/Tokyo")
 
 # 状態保持用変数
 last_joke = None
+last_trivia = None
 today_joke_cache = {"date": None, "joke": None}
 
+# ------------------------------------------
+# ❓ 豆知識・嘘か本当かわからない情報処理
+# ------------------------------------------
+def get_random_trivia():
+    """trivia.txt からランダムに1個取得"""
+    global last_trivia
+    try:
+        with open("trivia.txt", "r", encoding="utf-8") as f:
+            trivias = [line.strip() for line in f.readlines() if line.strip()]
+        
+        if not trivias:
+            return "雑学帳（trivia.txt）が空っぽだよ！ネタを追加してね。"
+        
+        if len(trivias) > 1 and last_trivia in trivias:
+            trivias.remove(last_trivia)
+            
+        chosen_trivia = random.choice(trivias)
+        last_trivia = chosen_trivia
+        return chosen_trivia
+    except FileNotFoundError:
+        return "エラー：trivia.txt が見つかりません。GitHubにファイルを作ってね！"
+
+# ------------------------------------------
+# 🤣 面白い話の処理
+# ------------------------------------------
 def get_random_joke():
     """jokes.txt からランダムに1個取得"""
     global last_joke
@@ -118,12 +144,10 @@ async def send_to_all_channels(content=None, embed=None):
 async def on_ready():
     print(f"🎉 lolbot が正常に起動しました: {bot.user.name}")
     try:
-        # 1. サーバー固有のコマンドが登録されている場合は全クリア
         for guild in bot.guilds:
             bot.tree.clear_commands(guild=guild)
             await bot.tree.sync(guild=guild)
 
-        # 2. グローバルコマンド（/coin, /today）をリセット＆同期
         synced = await bot.tree.sync()
         print(f"🔄 古いコマンドを削除し、{len(synced)} 個のスラッシュコマンド（/coin, /today）を正常に同期しました！")
     except Exception as e:
@@ -132,11 +156,27 @@ async def on_ready():
     if not daily_joke_loop.is_running():
         daily_joke_loop.start()
 
+    if not daily_trivia_loop.is_running():
+        daily_trivia_loop.start()
+
 # ==========================================
-# ⏰ 定期投稿タスク（毎日12:00）
+# ⏰ 定期投稿タスク（毎日 6:00 / 毎日 12:00）
 # ==========================================
+JST_6AM = time(hour=6, minute=0, second=0, tzinfo=JST)
 JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
 
+# 🌅 朝6時：本当か嘘かわからない豆知識配信
+@tasks.loop(time=JST_6AM)
+async def daily_trivia_loop():
+    trivia = get_random_trivia()
+    msg_content = "🔍 **【朝の豆知識】これ、本当？嘘？**\n" + trivia
+    await send_to_all_channels(content=msg_content)
+
+@daily_trivia_loop.before_loop
+async def before_daily_trivia_loop():
+    await bot.wait_until_ready()
+
+# ☀️ 昼12時：今日のおもしろ話配信
 @tasks.loop(time=JST_12PM)
 async def daily_joke_loop():
     joke = get_or_create_today_joke()
@@ -188,7 +228,6 @@ class EventSelect(discord.ui.Select):
         self.view.selected_day = d
         self.view.selected_label = [opt.label for opt in self.options if opt.value == self.values[0]][0]
         
-        # ボタンを有効化
         for item in self.view.children:
             if isinstance(item, discord.ui.Button):
                 item.disabled = False
@@ -208,7 +247,6 @@ class TestEventsView(discord.ui.View):
         
         self.add_item(EventSelect())
         
-        # ボタン作成（初期状態は無効）
         self.yes_btn = discord.ui.Button(label="はい (このチャンネルでテスト)", style=discord.ButtonStyle.success, disabled=True)
         self.yes_btn.callback = self.yes_callback
         self.add_item(self.yes_btn)
@@ -241,10 +279,18 @@ class TestEventsView(discord.ui.View):
         await send_to_all_channels(content=msg_content)
         await interaction.edit_original_response(content=f"✅ {self.selected_label} のテスト送信を全通知チャンネルに行いました！", view=None)
 
-
 # ==========================================
 # 🛠️ 通常のプレフィックスコマンド (`!`)
 # ==========================================
+
+# 🔍 朝6時配信のテストコマンド (!triviatest)
+@bot.command(name="triviatest")
+async def test_trivia_cmd(ctx):
+    if ctx.author.id != ALLOWED_USER_ID:
+        return
+    await ctx.send("📢 朝6時の雑学テスト配信を送信します...")
+    trivia = get_random_trivia()
+    await send_to_all_channels(content=f"🔍 **【テスト配信・朝の豆知識】これ、本当？嘘？**\n{trivia}")
 
 # 🎪 季節用テストコマンド (!testevents)
 @bot.command(name="testevents")
