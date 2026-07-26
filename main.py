@@ -111,15 +111,26 @@ async def send_to_all_channels(content=None, embed=None):
             except Exception as e:
                 print(f"チャンネル {channel_id} への送信失敗: {e}")
 
+# ==========================================
+# 🔄 起動時処理（既存の古いコマンド削除 & 再同期）
+# ==========================================
 @bot.event
 async def on_ready():
     print(f"🎉 lolbot が正常に起動しました: {bot.user.name}")
     try:
+        # 1. サーバー固有のコマンドが登録されている場合は全クリア
+        for guild in bot.guilds:
+            bot.tree.clear_commands(guild=guild)
+            await bot.tree.sync(guild=guild)
+
+        # 2. グローバルコマンド（/coin, /today）をリセット＆同期
         synced = await bot.tree.sync()
-        print(f"🔄 {len(synced)} 個のスラッシュコマンドを同期しました")
+        print(f"🔄 古いコマンドを削除し、{len(synced)} 個のスラッシュコマンド（/coin, /today）を正常に同期しました！")
     except Exception as e:
         print(f"同期エラー: {e}")
-    daily_joke_loop.start()
+        
+    if not daily_joke_loop.is_running():
+        daily_joke_loop.start()
 
 # ==========================================
 # ⏰ 定期投稿タスク（毎日12:00）
@@ -143,7 +154,7 @@ async def before_daily_joke_loop():
     await bot.wait_until_ready()
 
 # ==========================================
-# 💬 スラッシュコマンド (`/`)
+# 💬 スラッシュコマンド (`/`) 追加分
 # ==========================================
 
 # 🪙 コイン投げコマンド (/coin)
