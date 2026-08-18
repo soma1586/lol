@@ -2,7 +2,7 @@ import os
 import random
 import subprocess
 import sys
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from threading import Thread
 
 # 📦 ライブラリ自動インストール
@@ -30,12 +30,15 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 📢 通知チャンネルIDリスト
+# 📢 通常の通知チャンネルIDリスト
 TARGET_CHANNEL_IDS = [
     1523741885750050847,
     1523748305190912000,
     1523638969970196582
 ]
+
+# 💬 挨拶メッセージ用ターゲットチャンネルID
+GREETING_CHANNEL_ID = 1510627592523354252
 
 ALLOWED_USER_ID = 1260279278998913181
 JST = pytz.timezone("Asia/Tokyo")
@@ -44,6 +47,17 @@ JST = pytz.timezone("Asia/Tokyo")
 last_joke = None
 last_trivia = None
 today_joke_cache = {"date": None, "joke": None}
+
+# ------------------------------------------
+# 📅 挨拶メッセージ管理用ステート
+# ------------------------------------------
+greeting_state = {
+    "current_date": None,
+    "sent_types": set(),          # 当日送信済みの種別 ("morning", "night", "late_night")
+    "monthly_random_count": 0,    # 今月のランダム送信回数 (最大4回)
+    "current_month": None,        # 現在の月記録
+    "last_random_time": None      # 前回ランダム送信した日時 (7日間クールダウン判定用)
+}
 
 # ------------------------------------------
 # ❓ 豆知識・嘘か本当かわからない情報処理
@@ -101,20 +115,26 @@ def get_or_create_today_joke():
     return today_joke_cache["joke"]
 
 # ------------------------------------------
-# 🪙 コイントス処理（確率カスタム版）
+# 🪙 コイントス処理（確率見直し版）
 # ------------------------------------------
 def do_coin_flip():
-    """コイン投げの判定処理（表25%、裏35%、レア0.1%、ハズレ39.9%）"""
+    """
+    コイン投げの判定処理
+    - コインがどこか行く: 10% (10回に1回)
+    - コインが立つ: 1% (100回に1回)
+    - 表 (Heads): 44.5%
+    - 裏 (Tails): 44.5%
+    """
     rand = random.random()
     
-    if rand < 0.001:        # 0.1%
-        return "🤯 **奇跡！コインが横向きに立ちました！！ (超レア演出: 0.1%)**"
-    elif rand < 0.251:      # 25.0%
-        return "🪙 コインの結果は... **【 表 (Heads) 】** です！"
-    elif rand < 0.601:      # 35.0%
-        return "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
-    else:                   # 39.9%
+    if rand < 0.10:         # 10.0%
         return "🌀 コインは転がってどこかへ消えてしまった... (ハズレ)"
+    elif rand < 0.11:       # 1.0% (10% + 1%)
+        return "🤯 **奇跡！コインが横向きに立ちました！！ (レア演出: 1/100)**"
+    elif rand < 0.555:      # 44.5%
+        return "🪙 コインの結果は... **【 表 (Heads) 】** です！"
+    else:                   # 44.5%
+        return "🪙 コインの結果は... **【 裏 (Tails) 】** です！"
 
 def create_today_embed(custom_event_msg=None):
     """/today および !today 用のエムベッド作成"""
@@ -144,7 +164,7 @@ async def send_to_all_channels(content=None, embed=None):
                 print(f"チャンネル {channel_id} への送信失敗: {e}")
 
 # ==========================================
-# 🔄 起動時処理（既存の古いコマンド削除 & 再同期）
+# 🔄 起動時処理
 # ==========================================
 @bot.event
 async def on_ready():
@@ -155,7 +175,7 @@ async def on_ready():
             await bot.tree.sync(guild=guild)
 
         synced = await bot.tree.sync()
-        print(f"🔄 古いコマンドを削除し、{len(synced)} 個のスラッシュコマンド（/coin, /today）を正常に同期しました！")
+        print(f"🔄 古いコマンドを削除し、{len(synced)} 個のスラッシュコマンドを正常に同期しました！")
     except Exception as e:
         print(f"同期エラー: {e}")
         
@@ -165,8 +185,11 @@ async def on_ready():
     if not daily_trivia_loop.is_running():
         daily_trivia_loop.start()
 
+    if not daily_greeting_loop.is_running():
+        daily_greeting_loop.start()
+
 # ==========================================
-# ⏰ 定期投稿タスク（毎日 6:00 / 毎日 12:00）
+# ⏰ 定期投稿タスク
 # ==========================================
 JST_6AM = time(hour=6, minute=0, second=0, tzinfo=JST)
 JST_12PM = time(hour=12, minute=0, second=0, tzinfo=JST)
@@ -199,8 +222,90 @@ async def daily_joke_loop():
 async def before_daily_joke_loop():
     await bot.wait_until_ready()
 
+# 💬 挨拶メッセージ管理ループ（毎分チェック）
+@tasks.loop(minutes=1)
+async def daily_greeting_loop():
+    now = datetime.now(JST)
+    today_str = now.strftime("%Y-%m-%d")
+    month_str = now.strftime("%Y-%m")
+
+    # 日付・月の切り替わり判定
+    if greeting_state["current_date"] != today_str:
+        greeting_state["current_date"] = today_str
+        greeting_state["sent_types"].clear()
+
+    if greeting_state["current_month"] != month_str:
+        greeting_state["current_month"] = month_str
+        greeting_state["monthly_random_count"] = 0
+
+    channel = bot.get_channel(GREETING_CHANNEL_ID)
+    if not channel:
+        return
+
+    hour = now.hour
+    minute = now.minute
+
+    # ------------------------------------------
+    # 1. 毎日定刻送信の判定
+    # ------------------------------------------
+    # 朝6:00 - おはよう
+    if hour == 6 and minute == 0 and "morning" not in greeting_state["sent_types"]:
+        await channel.send("おはよう")
+        greeting_state["sent_types"].add("morning")
+
+    # 夜21:00 - おやすみ
+    elif hour == 21 and minute == 0 and "night" not in greeting_state["sent_types"]:
+        await channel.send("おやすみ")
+        greeting_state["sent_types"].add("night")
+
+    # 夜中1:00 - 早く寝ろよ
+    elif hour == 1 and minute == 0 and "late_night" not in greeting_state["sent_types"]:
+        await channel.send("早く寝ろよ")
+        greeting_state["sent_types"].add("late_night")
+
+    # ------------------------------------------
+    # 2. ランダム送信の判定
+    # ------------------------------------------
+    # 月4回上限チェック
+    if greeting_state["monthly_random_count"] >= 4:
+        return
+
+    # クールダウン（送信後1週間=7日間は不可）チェック
+    if greeting_state["last_random_time"] is not None:
+        if now < greeting_state["last_random_time"] + timedelta(days=7):
+            return
+
+    # 時間帯ごとに未送信の挨拶候補を選定
+    candidate_types = []
+    
+    # 6:00 ~ 11:59 (おはよう)
+    if 6 <= hour < 12 and "morning" not in greeting_state["sent_types"]:
+        candidate_types.append(("morning", "おはよう"))
+        
+    # 21:00 ~ 23:59 または 0:00 (おやすみ)
+    elif (21 <= hour <= 23 or hour == 0) and "night" not in greeting_state["sent_types"]:
+        candidate_types.append(("night", "おやすみ"))
+        
+    # 1:00 ~ 5:59 (早く寝ろよ)
+    elif 1 <= hour < 6 and "late_night" not in greeting_state["sent_types"]:
+        candidate_types.append(("late_night", "早く寝ろよ"))
+
+    # 候補がある場合、超低確率（毎分約1/300）で抽選送信
+    if candidate_types and random.random() < (1.0 / 300.0):
+        target_type, message_text = random.choice(candidate_types)
+        await channel.send(message_text)
+        
+        greeting_state["sent_types"].add(target_type)
+        greeting_state["monthly_random_count"] += 1
+        greeting_state["last_random_time"] = now
+        print(f"🎲 ランダム挨拶送信実行: '{message_text}' (今月: {greeting_state['monthly_random_count']}/4回目)")
+
+@daily_greeting_loop.before_loop
+async def before_daily_greeting_loop():
+    await bot.wait_until_ready()
+
 # ==========================================
-# 💬 スラッシュコマンド (`/`) 追加分
+# 💬 スラッシュコマンド (`/`)
 # ==========================================
 
 # 🪙 コイン投げコマンド (/coin)
@@ -360,7 +465,7 @@ async def update_patch(ctx):
         version_str = f"v{now.year}-{now.month}"
 
         embed = discord.Embed(
-            title="📢 lolbot リリースノート！",
+            title="📢 lolbot リリリースノート！",
             description=f"**バージョン:** `{version_str}`",
             color=discord.Color.green(),
             timestamp=now
